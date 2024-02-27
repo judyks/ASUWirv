@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>IRV Voting System</title>
+  </head>
+  <body>
+    <h1>Instant Runoff Voting System</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+      <input type="file" id="file" name="file" accept=".csv" required />
+      <button type="button" onclick="uploadFile()">
+        Upload and Process Votes
+      </button>
+    </form>
+    <div id="message"></div>
+    <div id="results"></div>
+
+    <script>
+      function uploadFile() {
+        const formData = new FormData(document.getElementById("uploadForm"));
+        const fileInput = document.getElementById("file");
+        const messageElement = document.getElementById("message");
+        messageElement.textContent = ""; // Clear previous messages
+
+        if (fileInput.files.length === 0) {
+          messageElement.textContent = "Please select a file to upload.";
+          return;
+        }
+
+        fetch("/upload", {
+          method: "POST",
+          body: formData,
+        })
+          .then(async (response) => {
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || "An unknown error occurred");
+            }
+            return data;
+          })
+          .then((data) => {
+            displayResults(data);
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+            messageElement.textContent = error.message;
+          });
+      }
+
+      function displayResults(data) {
+        const resultsElement = document.getElementById("results");
+        let resultsHtml = `<h2>${data.position} Results</h2><ul>`;
+
+        data.rounds.forEach((round) => {
+          resultsHtml += `<li><strong>Round ${round.round} Results:</strong><ul>`;
+          // Adjusted to handle 'round.votes' as an object
+          Object.entries(round.votes).forEach(([candidate, count]) => {
+            resultsHtml += `<li>${candidate}: ${count} votes</li>`;
+          });
+          if (round.eliminated.length > 0) {
+            resultsHtml += `<li>Eliminated: ${round.eliminated.join(
+              ", "
+            )}</li>`;
+          }
+          resultsHtml += `</ul></li>`;
+        });
+
+        resultsHtml += `</ul>`;
+        if (data.winner) {
+          resultsHtml += `<p><strong>Winner:</strong> ${data.winner}</p>`;
+        } else {
+          resultsHtml += `<p>No winner could be determined.</p>`;
+        }
+
+        resultsElement.innerHTML = resultsHtml;
+      }
+    </script>
+  </body>
+</html>
