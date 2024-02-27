@@ -1,13 +1,12 @@
 export type Vote = string[];
 export interface RoundResult {
-    votes: Map<string, number>;
+    votes: { [candidate: string]: number }; // Changed from Map to Object for serialization
     eliminated: string[];
 }
 export interface IRVResult {
     position: string;
     winner: string | null;
     rounds: RoundResult[];
-    candidates: string[];
 }
 
 export enum PositionName {
@@ -20,48 +19,55 @@ export enum PositionName {
     Programming = "Director of Campus Partnerships",
 }
 
-// Simplified IRV calculation logic
-export function calculateIRV(votes: Vote[], position: PositionName): IRVResult {
-    let rounds: RoundResult[] = [];
-    let candidates = new Set(votes.flat()); // Assuming all candidates appear at least once
-    let currentVotes = votes;
-
-    while (candidates.size > 1) {
-        let voteCounts: Map<string, number> = new Map();
-        currentVotes.forEach(vote => {
-            if (vote.length > 0) {
-                voteCounts.set(vote[0], (voteCounts.get(vote[0]) || 0) + 1);
-            }
-        });
-
-        let minVotes = Math.min(...voteCounts.values());
-        let maxVotes = Math.max(...voteCounts.values());
-        let totalVotes = Array.from(voteCounts.values()).reduce((a, b) => a + b, 0);
-
-        rounds.push({ votes: new Map(voteCounts), eliminated: [] });
-
-        if (maxVotes > totalVotes / 2) {
-            let winner = Array.from(voteCounts.entries()).find(([_, v]) => v === maxVotes)?.[0];
-            return {
-                position: position,
-                winner: winner || null,
-                rounds,
-                candidates: Array.from(candidates),
-            };
+function calculateRound(votes: Vote[]): { winner: string | null, roundResult: RoundResult } {
+    let tally = votes.reduce((acc, vote) => {
+        if (vote.length > 0) {
+            const firstChoice = vote[0];
+            acc[firstChoice] = (acc[firstChoice] || 0) + 1;
         }
+        return acc;
+    }, {} as { [candidate: string]: number });
 
-        let eliminatedCandidates = Array.from(voteCounts.entries()).filter(([_, v]) => v === minVotes).map(([k]) => k);
-        rounds[rounds.length - 1].eliminated = eliminatedCandidates;
+    const totalVotes = Object.values(tally).reduce((a, b) => a + b, 0);
+    const majority = totalVotes / 2;
+    const candidates = Object.keys(tally);
+    let winner: string | null = null;
 
-        candidates = new Set(Array.from(candidates).filter(c => !eliminatedCandidates.includes(c)));
-        currentVotes = currentVotes.map(vote => vote.filter(candidate => !eliminatedCandidates.includes(candidate)));
+    candidates.forEach(candidate => {
+        if (tally[candidate] > majority) {
+            winner = candidate;
+        }
+    });
+
+    if (winner) {
+        return { winner, roundResult: { votes: tally, eliminated: [] } };
     }
 
-    // If loop exits without finding a winner, return all remaining candidates as tied
+    const votesPerCandidate = Object.entries(tally);
+    const leastVotes = Math.min(...votesPerCandidate.map(([_, votes]) => votes));
+    const eliminated = votesPerCandidate.filter(([_, votes]) => votes === leastVotes).map(([candidate]) => candidate);
+
+    return { winner: null, roundResult: { votes: tally, eliminated } };
+}
+
+export function calculateIRV(votes: Vote[], position: PositionName): IRVResult {
+    const rounds: RoundResult[] = [];
+    let currentVotes = [...votes];
+    let winner: string | null = null;
+
+    while (!winner && currentVotes.some(vote => vote.length > 0)) {
+        const { winner: roundWinner, roundResult } = calculateRound(currentVotes);
+        winner = roundWinner;
+        rounds.push(roundResult);
+
+        if (!winner) {
+            currentVotes = currentVotes.map(vote => vote.filter(choice => !roundResult.eliminated.includes(choice)));
+        }
+    }
+
     return {
         position: position,
-        winner: null,
+        winner,
         rounds,
-        candidates: Array.from(candidates),
     };
 }

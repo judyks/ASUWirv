@@ -1,9 +1,9 @@
-
 import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
+import path from 'path';
 import csvParser from 'csv-parser';
-import { calculateIRV, Vote, PositionName } from './irv';
+import { calculateIRV, IRVResult, PositionName } from './irv';
 
 const app = express();
 const PORT = 3000;
@@ -15,53 +15,65 @@ app.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded.' });
     }
+
     const filePath = req.file.path;
-    const votes: Vote[] = [];
+    // Initialize structure to hold segregated votes for each position
+    const votesByPosition: { [key: string]: string[][] } = {};
 
-    fs.createReadStream(req.file.path)
-       .pipe(csvParser())
-       .on('data', (data) => {
-           const vote: Vote = Object.values(data).filter(Boolean).map(String);
-           votes.push(vote);
-       })
-       .on('end', () => {
-           // Calculate IRV for a specific position
-           // TODO:adjust logic here to handle multiple positions
-           const position = PositionName.President; // Example position (TEMPORARY)
-           const irvResult = calculateIRV(votes, position);
+    fs.createReadStream(filePath)
+        .pipe(csvParser())
+        .on('data', (row) => {
+            // Exclude the 'Submission ID' or any non-vote related columns
+            const { 'Submission ID (Voter)': _, ...voteColumns } = row;
 
-           if (req.file) {
-            fs.unlink(filePath, (err) => {
+            Object.entries(voteColumns).forEach(([header, choice]) => {
+                if (choice) {
+                    // Extract the position name from the header
+                    const positionMatch = header.match(/^(.*?) choice/);
+                    if (positionMatch) {
+                        const position = positionMatch[1];
+                        if (!votesByPosition[position]) {
+                            votesByPosition[position] = [];
+                        }
+                        // Ensure there's an array for the current voter (row)
+                        if (!votesByPosition[position][row['Submission ID (Voter)']]) {
+                            votesByPosition[position][row['Submission ID (Voter)']] = [];
+                        }
+                        votesByPosition[position][row['Submission ID (Voter)']].push(choice as string);
+                    }
+                }
+            });
+        })
+        .on('end', () => {
+            // Process IRV calculations for each position
+            const results: Partial<Record<PositionName, IRVResult>> = {};
+
+            Object.entries(votesByPosition).forEach(([position, votesArray]) => {
+                // Filter out empty entries created due to direct indexing by Submission ID
+                const filteredVotes = votesArray.filter(vote => vote !== undefined);
+                if (Object.values(PositionName).includes(position as PositionName)) {
+                    results[position as PositionName] = calculateIRV(filteredVotes, position as PositionName);
+                }
+            });
+
+            fs.unlink(filePath, err => {
                 if (err) {
                     console.error('Failed to delete the file:', err);
-                    // Consider how to handle this error. Maybe log it or send an error response.
+                    return res.status(500).json({ error: 'Failed to delete the uploaded file after processing.' });
                 }
-                // Proceed to send response here to ensure it's sent regardless of file deletion success
-                res.json(irvResult); // Send IRV calculation results back to client
+                res.json(results);
             });
-        } else {
-            // Directly respond if for some reason req.file is undefined at this point
-            res.json(irvResult);
-        }
-    })
-       .on('error', (error) => {
-        console.error('Error processing file:', error);
-        // Asynchronous file deletion with check for req.file
-        if (req.file) {
-            fs.unlink(filePath, (err) => {
-                if (err) {
-                    console.error('Failed to delete the file after error:', err);
-                }
-                // Send error response after attempting to delete the file
+        })
+        .on('error', error => {
+            console.error('Error processing file:', error);
+            fs.unlink(filePath, err => {
+                if (err) console.error('Failed to delete the file:', err);
                 res.status(500).json({ error: 'Error processing file.' });
             });
-        } else {
-            // Send error if req.file is undefined 
-            res.status(500).json({ error: 'Error processing file.' });
-        }
-    });
+        });
 });
 
 app.listen(PORT, () => {
     console.log(`Server listening on http://localhost:${PORT}`);
 });
+

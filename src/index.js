@@ -1,56 +1,19 @@
 "use strict";
-// import express from 'express';
-// import multer from 'multer';
-// import fs from 'fs';
-// import path from 'path';
-// import csvParser from 'csv-parser';
-// import { calculateIRV, Vote, IRVResult } from './irv';
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-// const app = express();
-// const PORT = 3000;
-// const upload = multer({ dest: 'uploads/' });
-// app.use(express.static('public'));
-// app.post('/upload', upload.single('file'), (req, res) => {
-//     if (!req.file) {
-//         return res.status(400).json({ error: 'No file uploaded.' });
-//     }
-//     const filePath = req.file.path;
-//     const votes: Vote[] = [];
-//     fs.createReadStream(filePath)
-//         .pipe(csvParser())
-//         .on('data', (data) => {
-//             const vote: Vote = Object.values(data).filter(Boolean).map(String);
-//             votes.push(vote);
-//         })
-//         .on('end', () => {
-//             const position = "Position Name"; // Placeholder
-//             const irvResult: IRVResult = calculateIRV(votes, position);
-//             // Attempt to delete the file
-//             fs.unlink(filePath, (err) => {
-//                 if (err) {
-//                     console.error('Failed to delete the file:', err);
-//                     return res.status(500).json({ error: 'Failed to delete the uploaded file after processing.' });
-//                 }
-//                 res.json(irvResult);
-//             });
-//         })
-//         .on('error', (error) => {
-//             console.error('Error processing file:', error);
-//             fs.unlink(filePath, (err) => {
-//                 if (err) {
-//                     console.error('Failed to delete the file after processing error:', err);
-//                 }
-//                 res.status(500).json({ error: 'Error processing file.' });
-//             });
-//         });
-// });
-// app.listen(PORT, () => {
-//     console.log(`Server listening on http://localhost:${PORT}`);
-// });
-// index.ts
 const express_1 = __importDefault(require("express"));
 const multer_1 = __importDefault(require("multer"));
 const fs_1 = __importDefault(require("fs"));
@@ -65,49 +28,56 @@ app.post('/upload', upload.single('file'), (req, res) => {
         return res.status(400).json({ error: 'No file uploaded.' });
     }
     const filePath = req.file.path;
-    const votes = [];
-    fs_1.default.createReadStream(req.file.path)
+    // Initialize structure to hold segregated votes for each position
+    const votesByPosition = {};
+    fs_1.default.createReadStream(filePath)
         .pipe((0, csv_parser_1.default)())
-        .on('data', (data) => {
-        const vote = Object.values(data).filter(Boolean).map(String);
-        votes.push(vote);
+        .on('data', (row) => {
+        // Exclude the 'Submission ID' or any non-vote related columns
+        const { 'Submission ID (Voter)': _ } = row, voteColumns = __rest(row, ['Submission ID (Voter)']);
+        Object.entries(voteColumns).forEach(([header, choice]) => {
+            if (choice) {
+                // Extract the position name from the header
+                const positionMatch = header.match(/^(.*?) choice/);
+                if (positionMatch) {
+                    const position = positionMatch[1];
+                    if (!votesByPosition[position]) {
+                        votesByPosition[position] = [];
+                    }
+                    // Ensure there's an array for the current voter (row)
+                    if (!votesByPosition[position][row['Submission ID (Voter)']]) {
+                        votesByPosition[position][row['Submission ID (Voter)']] = [];
+                    }
+                    votesByPosition[position][row['Submission ID (Voter)']].push(choice);
+                }
+            }
+        });
     })
         .on('end', () => {
-        // Example: Calculate IRV for a specific position
-        // You may need to adjust logic here to handle multiple positions
-        const position = irv_1.PositionName.President; // Example position
-        const irvResult = (0, irv_1.calculateIRV)(votes, position);
-        if (req.file) {
-            fs_1.default.unlink(filePath, (err) => {
-                if (err) {
-                    console.error('Failed to delete the file:', err);
-                    // Consider how to handle this error. Maybe log it or send an error response.
-                }
-                // Proceed to send response here to ensure it's sent regardless of file deletion success
-                res.json(irvResult); // Send IRV calculation results back to client
-            });
-        }
-        else {
-            // Directly respond if for some reason req.file is undefined at this point
-            res.json(irvResult);
-        }
+        // Process IRV calculations for each position
+        const results = {};
+        Object.entries(votesByPosition).forEach(([position, votesArray]) => {
+            // Filter out empty entries created due to direct indexing by Submission ID
+            const filteredVotes = votesArray.filter(vote => vote !== undefined);
+            if (Object.values(irv_1.PositionName).includes(position)) {
+                results[position] = (0, irv_1.calculateIRV)(filteredVotes, position);
+            }
+        });
+        fs_1.default.unlink(filePath, err => {
+            if (err) {
+                console.error('Failed to delete the file:', err);
+                return res.status(500).json({ error: 'Failed to delete the uploaded file after processing.' });
+            }
+            res.json(results);
+        });
     })
-        .on('error', (error) => {
+        .on('error', error => {
         console.error('Error processing file:', error);
-        // Asynchronous file deletion with check for req.file
-        if (req.file) {
-            fs_1.default.unlink(filePath, (err) => {
-                if (err) {
-                    console.error('Failed to delete the file after error:', err);
-                }
-                // Send error response after attempting to delete the file
-                res.status(500).json({ error: 'Error processing file.' });
-            });
-        }
-        else {
-            // Send error if req.file is undefined 
+        fs_1.default.unlink(filePath, err => {
+            if (err)
+                console.error('Failed to delete the file:', err);
             res.status(500).json({ error: 'Error processing file.' });
-        }
+        });
     });
 });
 app.listen(PORT, () => {
